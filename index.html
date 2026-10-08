@@ -126,6 +126,8 @@ ul.lines.over{background:var(--accent-soft);border-radius:6px}
 .mem .name{font:inherit;font-size:15px;font-weight:600;color:var(--ink);background:transparent;border:0;border-bottom:1px solid transparent;padding:2px 0;width:100%}
 .mem .name:hover,.mem .name:focus{border-bottom-color:var(--line-strong);outline:none}
 .mem .meta{grid-column:2/4;display:flex;gap:16px;align-items:center;flex-wrap:wrap;color:var(--muted);font-size:12.5px}
+.mem .mailin{grid-column:2/4;font-size:12.5px;font-weight:400;color:var(--muted)}
+.mem .mailin::placeholder{color:var(--faint)}
 .mem .mail{grid-column:2/4;color:var(--muted);font-size:12.5px;overflow-wrap:anywhere}
 .tog{display:inline-flex;align-items:center;gap:8px;cursor:pointer;color:var(--ink);font-size:12.5px}
 .tog input{appearance:none;-webkit-appearance:none;width:30px;height:18px;border-radius:999px;background:var(--line-strong);position:relative;cursor:pointer;margin:0;transition:background .15s}
@@ -426,18 +428,20 @@ function teamPanel(){
       <button class="sw" style="--c:${esc(m.color)}" ${admin?`data-act="color" data-id="${esc(m.id)}" title="Cambiar color"`:'disabled'} aria-label="Color de ${esc(m.name)}"></button>
       ${admin?`<input class="name" id="mname-${esc(m.id)}" data-id="${esc(m.id)}" value="${esc(m.name)}" aria-label="Nombre" maxlength="60">`:`<span class="name">${esc(m.name)}</span>`}
       ${admin&&!self?`<button class="del" data-act="del" data-id="${esc(m.id)}">Eliminar</button>`:'<span></span>'}
-      <div class="mail">${esc(m.email)}${self?' · tú':''}</div>
-      <div class="meta">
+      ${admin&&!self
+        ?`<input class="name mailin" id="mmail-${esc(m.id)}" data-id="${esc(m.id)}" type="email" value="${esc(m.email||'')}" placeholder="Sin cuenta propia · añade un correo si va a entrar desde otro dispositivo" aria-label="Correo de ${esc(m.name)}">`
+        :`<div class="mail">${m.email?esc(m.email):'Sin cuenta propia'}${self?' · tú':''}</div>`}
+      ${m.email?`<div class="meta">
         <label class="tog"><input type="checkbox" id="edit-${esc(m.id)}" data-act="perm" data-id="${esc(m.id)}" ${m.can_edit_others||m.is_admin?'checked':''} ${admin&&!m.is_admin?'':'disabled'}>Puede editar tareas de los demás</label>
         <label class="tog"><input type="checkbox" id="admin-${esc(m.id)}" data-act="admin" data-id="${esc(m.id)}" ${m.is_admin?'checked':''} ${admin&&!self?'':'disabled'}>Administrador</label>
-      </div>${confirm}</div>`;
+      </div>`:''}${confirm}</div>`;
   }).join('');
   return `<div class="scrim" data-act="close-bg"><div class="panel" role="dialog" aria-modal="true" aria-labelledby="team-h">
     <h2 id="team-h">Equipo</h2>
-    <p class="sub">Cada persona edita sus propias tareas. Activa el interruptor para que alguien pueda editar también las de los demás. Los administradores pueden editarlo todo y cambiar el equipo.</p>
+    <p class="sub">Para añadir a alguien basta con su nombre. Sus tareas las puede editar cualquiera que use esta sesión, por ejemplo en el ordenador de la oficina. Si alguien va a entrar con su propia cuenta desde otro dispositivo, añade su correo y decide sus permisos.</p>
     ${rows}
-    ${admin?`<form class="add" id="add-form"><input class="field" id="new-name" placeholder="Nombre" autocomplete="off" maxlength="60" required><input class="field" id="new-email" type="email" placeholder="Correo con el que entrará" autocomplete="off" required><button class="btn" type="submit">Añadir</button></form>
-      <p class="sub" style="margin:10px 0 0">Para que pueda entrar, crea también su usuario en Supabase (Authentication → Users → Add user) con el mismo correo y una contraseña inicial.</p>`:''}
+    ${admin?`<form class="add" id="add-form"><input class="field" id="new-name" placeholder="Nombre" autocomplete="off" maxlength="60" required><input class="field" id="new-email" type="email" placeholder="Correo (opcional)" autocomplete="off"><button class="btn" type="submit">Añadir</button></form>
+      <p class="sub" style="margin:10px 0 0">Si pones un correo, crea también su usuario en Supabase (Authentication → Users → Add user) con ese mismo correo y una contraseña inicial.</p>`:''}
     <div class="foot"><button class="btn ghost" data-act="close">Cerrar</button></div>
   </div></div>`;
 }
@@ -596,6 +600,12 @@ app.addEventListener('change',ev=>{
   const t=ev.target;
   if(t.dataset.act==='perm')api.updMember(t.dataset.id,{can_edit_others:t.checked});
   else if(t.dataset.act==='admin')api.updMember(t.dataset.id,{is_admin:t.checked});
+  else if(t.classList.contains('mailin')){
+    const m=memberById(t.dataset.id), v=t.value.trim().toLowerCase()||null;
+    if(!m||v===(m.email||null))return;
+    if(v&&!t.checkValidity()){toast('Ese correo no parece válido.');return}
+    api.updMember(t.dataset.id,{email:v});
+  }
   else if(t.classList.contains('name')&&t.dataset.id){const v=t.value.trim();const m=memberById(t.dataset.id);if(v&&m&&v!==m.name)api.updMember(t.dataset.id,{name:v})}
 });
 
@@ -603,8 +613,8 @@ app.addEventListener('submit',async ev=>{
   ev.preventDefault();
   const f=ev.target.id, val=id=>(document.getElementById(id)||{}).value||'';
   if(f==='add-form'){
-    const name=val('new-name').trim(), email=val('new-email').trim().toLowerCase();
-    if(!name||!email)return;
+    const name=val('new-name').trim(), email=val('new-email').trim().toLowerCase()||null;
+    if(!name)return;
     const used=st.members.map(m=>m.color);
     const color=PALETTE.find(c=>!used.includes(c))||PALETTE[st.members.length%PALETTE.length];
     document.getElementById('new-name').value='';document.getElementById('new-email').value='';
