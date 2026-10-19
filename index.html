@@ -63,6 +63,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
 .tb:hover{background:var(--hover)}
 .tb svg{width:16px;height:16px}
 .tb.install{color:var(--accent)}
+.tb.on{background:var(--accent-soft);color:var(--accent)}
 
 .banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;border-radius:10px;background:var(--accent-soft);margin-block:4px 10px;font-size:13.5px}
 
@@ -104,6 +105,31 @@ ul.lines.over{background:var(--accent-soft);border-radius:6px}
 .task.can:hover .chk,.chk:focus-visible{opacity:1}
 .chk:hover{box-shadow:inset 0 0 0 1.5px var(--accent);color:var(--accent)}
 .task.done .chk{opacity:1;background:var(--line);box-shadow:none;color:var(--muted)}
+.more{height:20px;flex:none;display:inline-flex;align-items:center;gap:3px;padding-inline:3px;border-radius:5px;color:var(--muted);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums}
+.more svg{width:12px;height:12px}
+.more .chev{transition:transform .15s}
+.more.open .chev{transform:rotate(180deg)}
+.more:hover{background:var(--hover);color:var(--ink)}
+.more:not(.has):not(.open){opacity:0}
+.task:hover .more,.more:focus-visible{opacity:1!important}
+.task.done .more{opacity:.5}
+li.detail{list-style:none;padding:6px 0 10px 18px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+.notes{width:100%;min-height:52px;resize:none;border:0;border-radius:6px;background:var(--hover);color:var(--ink);font:inherit;font-size:13px;line-height:1.45;padding:7px 9px;outline:none}
+.notes:focus{box-shadow:inset 0 0 0 1px var(--line-strong)}
+.notes::placeholder,.sadd::placeholder{color:var(--faint)}
+.subs{list-style:none;margin:0;padding:0}
+.sub{display:flex;align-items:center;gap:7px;min-height:26px}
+.schk{width:14px;height:14px;border-radius:4px;flex:none;display:grid;place-items:center;box-shadow:inset 0 0 0 1.5px var(--line-strong);color:transparent}
+.schk svg{width:9px;height:9px}
+.schk:not([disabled]):hover{box-shadow:inset 0 0 0 1.5px var(--accent)}
+.schk[disabled]{cursor:default}
+.sub.done .schk{background:var(--muted);box-shadow:none;color:var(--bg)}
+.stext,.sadd{flex:1;min-width:0;border:0;background:transparent;color:var(--ink);font:inherit;font-size:13px;padding:2px 0;outline:none}
+.sub.done .stext{color:var(--faint);text-decoration:line-through}
+.sdel{color:var(--faint);font-size:16px;line-height:1;width:18px;opacity:0}
+.sub:hover .sdel,.sdel:focus-visible{opacity:1}
+.sdel:hover{color:var(--red)}
+.sub.add .plus{width:14px;text-align:center;color:var(--faint);flex:none}
 .task[draggable="true"]{cursor:grab}
 .task.dragging{opacity:.4}
 .edit{flex:1;min-width:0;height:28px;border:0;background:transparent;color:var(--ink);font:inherit;outline:none;padding:0}
@@ -170,6 +196,7 @@ ul.lines.over{background:var(--accent-soft);border-radius:6px}
   .chk{opacity:.6}
   .legend{display:none}
 }
+@media (hover:none){.more{opacity:1!important}.sdel{opacity:1}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -200,7 +227,8 @@ function store(k,v){try{if(v===undefined)return localStorage.getItem(k);localSto
 const st={
   screen:'loading', email:'', userId:null, authMsg:'', authErr:false, busy:false,
   members:[], tasks:[],
-  view:store('semana.view')||'all',
+  open:new Set(), noteDrafts:{},
+  view:store('semana.view')||'all', hideDone:store('semana.hideDone')==='1',
   week:mondayOf(new Date()), today:iso(new Date()),
   editing:null, teamOpen:false, accountOpen:false, confirmDel:null,
   rendering:false, pending:false, narrow:innerWidth<=560, installEvt:null
@@ -226,7 +254,7 @@ function effKey(t){
   if(!t.done&&t.date<st.today)return st.today;
   return t.date;
 }
-const visible=t=>st.view==='all'||t.owner===st.view;
+const visible=t=>(st.view==='all'||t.owner===st.view)&&!(st.hideDone&&t.done);
 const tasksFor=key=>st.tasks.filter(t=>visible(t)&&effKey(t)===key).sort((a,b)=>(a.sort||0)-(b.sort||0));
 
 /* ---------- Supabase ---------- */
@@ -260,7 +288,7 @@ async function loadMembers(){
 }
 async function loadTasks(){
   const seq=++loadSeq, from=iso(st.week), to=iso(addDays(st.week,6));
-  const {data,error}=await sb.from('tasks').select('id,owner,text,date,done,status,sort')
+  const {data,error}=await sb.from('tasks').select('id,owner,text,date,done,status,sort,notes,subtasks')
     .or(`done.eq.false,date.is.null,and(date.gte.${from},date.lte.${to})`).limit(5000);
   if(error)throw error;
   if(seq!==loadSeq)return;
@@ -352,6 +380,10 @@ const ICON={
   check:'<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.3 5 8.7l4.5-5.4"/></svg>',
   team:'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="7.5" cy="7" r="2.8"/><path d="M2.5 16c.6-2.8 2.6-4.3 5-4.3s4.4 1.5 5 4.3"/><circle cx="14" cy="7.8" r="2.2"/><path d="M13.6 11.8c2 .1 3.4 1.4 3.9 3.6"/></svg>',
   user:'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="10" cy="7" r="3.2"/><path d="M3.8 17c.8-3.2 3.3-5 6.2-5s5.4 1.8 6.2 5"/></svg>',
+  chev:'<svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5 6 7.5l3-3"/></svg>',
+  note:'<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2.5 3h7M2.5 6h7M2.5 9h4.5"/></svg>',
+  eye:'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M1.8 10S4.7 4.5 10 4.5 18.2 10 18.2 10 15.3 15.5 10 15.5 1.8 10 1.8 10Z"/><circle cx="10" cy="10" r="2.5"/></svg>',
+  eyeOff:'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8.2 4.7A8.6 8.6 0 0 1 10 4.5c5.3 0 8.2 5.5 8.2 5.5a14 14 0 0 1-2.3 3M5.3 6C3 7.5 1.8 10 1.8 10S4.7 15.5 10 15.5c1.6 0 3-.5 4.2-1.2M3 3l14 14"/></svg>',
   install:'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3v9M6 8.5l4 4 4-4M4 16h12"/></svg>'
 };
 
@@ -375,6 +407,7 @@ function header(){
     </div></div>
     <div class="bar"><div class="people">${chips.join('')}</div>
       <div class="side"><div class="legend"><span><i style="background:var(--yellow)"></i>En proceso</span><span><i style="background:var(--red)"></i>Atascado</span></div>
+      <button class="tb ${st.hideDone?'on':''}" data-act="hide-done" aria-pressed="${st.hideDone}">${st.hideDone?ICON.eyeOff:ICON.eye}${st.hideDone?'Mostrar hechas':'Ocultar hechas'}</button>
       ${st.installEvt?`<button class="tb install" data-act="install">${ICON.install}Instalar app</button>`:''}
       <button class="tb" data-act="team">${ICON.team}Equipo</button>
       <button class="tb" data-act="account">${ICON.user}${esc(me?me.name:'Cuenta')}</button></div></div>`;
@@ -389,10 +422,51 @@ function taskRow(t){
     <button class="st ${s||'none'}" data-act="status" aria-label="Estado: ${s?STATUS_LABEL[s]:'sin etiqueta'}" title="${s?STATUS_LABEL[s]:(can?'Marcar estado':'')}" ${can?'':'tabindex="-1"'}></button>
     <span class="txt" title="${esc(t.text)}">${esc(t.text)}</span>
     ${rolled?`<span class="roll" title="Pendiente desde el ${fmtShort(t.date)}">↻</span>`:''}
+    ${moreBtn(t,can)}
     ${st.view==='all'&&m?`<span class="who" style="--c:${esc(m.color)}" title="${esc(m.name)}">${esc((m.name||'?').trim().charAt(0).toUpperCase())}</span>`:''}
     ${can?`<button class="chk" data-act="done" aria-label="${t.done?'Marcar como pendiente':'Completar'}">${ICON.check}</button>`:''}
+  </li>${st.open.has(t.id)?detail(t,can):''}`;
+}
+
+/* notes + subtasks: a fold-out under the task, closed by default */
+const subsOf=t=>Array.isArray(t.subtasks)?t.subtasks:[];
+function moreBtn(t,can){
+  const subs=subsOf(t), hasNotes=!!(t.notes&&t.notes.trim()), open=st.open.has(t.id);
+  const has=hasNotes||subs.length;
+  if(!has&&!can)return '';
+  const count=subs.length?`<span class="cnt">${subs.filter(s=>s.done).length}/${subs.length}</span>`:'';
+  const label=open?'Cerrar notas y subtareas':'Abrir notas y subtareas';
+  return `<button class="more ${has?'has':''} ${open?'open':''}" data-act="expand" aria-expanded="${open}" aria-label="${label}" title="${label}">${hasNotes?ICON.note:''}${count}${ICON.chev}</button>`;
+}
+function detail(t,can){
+  const id=esc(t.id), subs=subsOf(t);
+  const notes=st.noteDrafts[t.id]??(t.notes||'');
+  const items=subs.map(s=>`<li class="sub ${s.done?'done':''}" data-sid="${esc(s.id)}">
+      <button class="schk" data-act="sub-done" ${can?'':'disabled'} aria-label="${s.done?'Marcar subtarea como pendiente':'Completar subtarea'}">${ICON.check}</button>
+      ${can?`<input class="stext" id="sub-${id}-${esc(s.id)}" value="${esc(s.text)}" maxlength="200" aria-label="Subtarea">`:`<span class="stext">${esc(s.text)}</span>`}
+      ${can?`<button class="sdel" data-act="sub-del" aria-label="Borrar subtarea" title="Borrar">×</button>`:''}
+    </li>`).join('');
+  return `<li class="detail" data-id="${id}">
+    ${can||notes?`<textarea class="notes" id="notes-${id}" data-id="${id}" placeholder="Notas…" maxlength="5000" ${can?'':'readonly'} aria-label="Notas de la tarea">${esc(notes)}</textarea>`:''}
+    <ul class="subs">${items}
+      ${can&&subs.length<50?`<li class="sub add"><span class="plus">+</span><input class="sadd" id="sub-add-${id}" data-id="${id}" placeholder="Añadir subtarea" maxlength="200" autocomplete="off" aria-label="Añadir subtarea"></li>`:''}
+    </ul>
   </li>`;
 }
+function setSubs(taskId,fn,later){
+  const t=st.tasks.find(t=>t.id===taskId);if(!t||!canEditFor(t.owner))return;
+  api.updTask(taskId,{subtasks:fn(subsOf(t).map(s=>({...s})))});
+  if(later)setTimeout(requestRender);else render(true);
+}
+const noteTimers={};
+function saveNotes(id){
+  clearTimeout(noteTimers[id]);
+  const v=st.noteDrafts[id], t=st.tasks.find(t=>t.id===id);
+  if(v===undefined||!t||!canEditFor(t.owner))return;
+  if((t.notes||'')!==v)api.updTask(id,{notes:v.trim()?v:null});
+  if(document.activeElement?.id!=='notes-'+id)delete st.noteDrafts[id];
+}
+function growNotes(){app.querySelectorAll('textarea.notes').forEach(n=>{n.style.height='auto';n.style.height=Math.min(n.scrollHeight+2,320)+'px'})}
 
 function lines(key,min){
   const list=tasksFor(key), e=st.editing, add=canAdd();
@@ -487,9 +561,9 @@ function authScreen(){
   return `<div class="auth"><div class="card">${body}</div></div>`;
 }
 
-function render(){
+function render(force){
   const a=document.activeElement;
-  if(st.screen==='app'&&a&&a.tagName==='INPUT'&&a.id!=='edit-input'&&app.contains(a)&&a.type!=='checkbox'){st.pending=true;return}
+  if(!force&&st.screen==='app'&&a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA')&&a.type!=='checkbox'&&a.closest('.panel,.detail')){st.pending=true;return}
   st.pending=false;
   if(st.screen==='loading'){app.innerHTML='<div class="loading">Cargando…</div>';return}
   if(st.screen!=='app'){
@@ -499,12 +573,17 @@ function render(){
     const f=app.querySelector('input');if(f&&!a?.closest?.('.auth'))f.focus();
     return;
   }
-  const caret=a&&a.id==='edit-input'?a.selectionStart:null;
+  const fid=a&&a.id&&a!==document.body&&app.contains(a)?a.id:null;
+  const caret=fid&&'selectionStart' in a?a.selectionStart:null;
   st.rendering=true;
   app.innerHTML=header()+week()+someday()+(st.teamOpen?teamPanel():'')+(st.accountOpen?accountPanel():'');
   st.rendering=false;
-  const inp=document.getElementById('edit-input');
-  if(inp){inp.focus();const p=caret??inp.value.length;try{inp.setSelectionRange(p,p)}catch(e){}}
+  growNotes();
+  const inp=document.getElementById('edit-input')||(fid&&document.getElementById(fid));
+  if(inp){
+    inp.focus({preventScroll:true});
+    if('selectionStart' in inp){const p=(inp.id===fid?caret:null)??inp.value.length;try{inp.setSelectionRange(p,p)}catch(e){}}
+  }
 }
 
 /* While a pointer is down, hold back re-renders so the element under it survives until its click. */
@@ -528,23 +607,23 @@ function commitEdit(){
 function startNew(key){
   const owner=newOwner();
   if(!owner||!canEditFor(owner))return;
-  commitEdit();st.editing={key,owner,draft:''};render();
+  commitEdit();st.editing={key,owner,draft:''};render(true);
 }
 function startEdit(id){
   const t=st.tasks.find(t=>t.id===id);if(!t||!canEditFor(t.owner))return;
-  commitEdit();st.editing={id,draft:t.text};render();
+  commitEdit();st.editing={id,draft:t.text};render(true);
 }
 function toggleDone(id){
   const t=st.tasks.find(t=>t.id===id);if(!t||!canEditFor(t.owner))return;
   commitEdit();
   const p={done:!t.done};
   if(!t.done&&t.date&&t.date<st.today)p.date=st.today;
-  api.updTask(id,p);render();
+  api.updTask(id,p);render(true);
 }
 function cycleStatus(id){
   const t=st.tasks.find(t=>t.id===id);if(!t||!canEditFor(t.owner))return;
   commitEdit();
-  api.updTask(id,{status:STATUS[(STATUS.indexOf(t.status||null)+1)%STATUS.length]});render();
+  api.updTask(id,{status:STATUS[(STATUS.indexOf(t.status||null)+1)%STATUS.length]});render(true);
 }
 function goWeek(d){commitEdit();st.week=d;render();loadTasks().then(requestRender).catch(()=>toast('No se pudieron cargar las tareas.'))}
 
@@ -578,6 +657,17 @@ app.addEventListener('click',async ev=>{
     case 'today':goWeek(mondayOf(parse(st.today)));break;
     case 'team':commitEdit();st.teamOpen=true;render();break;
     case 'account':commitEdit();st.accountOpen=true;render();break;
+    case 'expand':{
+      const tid=a.closest('li').dataset.id;commitEdit();
+      if(st.open.has(tid)){saveNotes(tid);delete st.noteDrafts[tid];st.open.delete(tid)}else st.open.add(tid);
+      render(true);break;
+    }
+    case 'sub-done':case 'sub-del':{
+      const tid=a.closest('.detail').dataset.id, sid=a.closest('.sub').dataset.sid;
+      setSubs(tid,subs=>act==='sub-del'?subs.filter(s=>s.id!==sid):subs.map(s=>s.id===sid?{...s,done:!s.done}:s));
+      break;
+    }
+    case 'hide-done':commitEdit();st.hideDone=!st.hideDone;store('semana.hideDone',st.hideDone?'1':'0');render();break;
     case 'close':case 'close-bg':st.teamOpen=false;st.accountOpen=false;st.confirmDel=null;render();break;
     case 'color':{const m=memberById(id);api.updMember(id,{color:PALETTE[(PALETTE.indexOf(m.color)+1)%PALETTE.length]});break}
     case 'del':st.confirmDel=id;render();break;
@@ -598,6 +688,12 @@ app.addEventListener('click',async ev=>{
 
 app.addEventListener('change',ev=>{
   const t=ev.target;
+  if(t.classList.contains('notes')){saveNotes(t.dataset.id);return}
+  if(t.classList.contains('stext')){
+    const tid=t.closest('.detail').dataset.id, sid=t.closest('.sub').dataset.sid, v=t.value.trim();
+    setSubs(tid,subs=>v?subs.map(s=>s.id===sid?{...s,text:v}:s):subs.filter(s=>s.id!==sid),true);
+    return;
+  }
   if(t.dataset.act==='perm')api.updMember(t.dataset.id,{can_edit_others:t.checked});
   else if(t.dataset.act==='admin')api.updMember(t.dataset.id,{is_admin:t.checked});
   else if(t.classList.contains('mailin')){
@@ -644,16 +740,33 @@ app.addEventListener('submit',async ev=>{
   st.busy=false;render();
 });
 
-app.addEventListener('input',ev=>{if(ev.target.id==='edit-input'&&st.editing)st.editing.draft=ev.target.value});
+app.addEventListener('input',ev=>{
+  const t=ev.target;
+  if(t.id==='edit-input'&&st.editing)st.editing.draft=t.value;
+  else if(t.classList.contains('notes')){
+    const id=t.dataset.id;st.noteDrafts[id]=t.value;growNotes();
+    clearTimeout(noteTimers[id]);noteTimers[id]=setTimeout(()=>saveNotes(id),1200);
+  }
+});
 app.addEventListener('keydown',ev=>{
-  if(ev.target.id!=='edit-input')return;
+  const t=ev.target;
+  if(t.classList.contains('sadd')&&ev.key==='Enter'){
+    ev.preventDefault();const v=t.value.trim();if(!v)return;
+    setSubs(t.dataset.id,subs=>subs.concat({id:Math.random().toString(36).slice(2,10),text:v,done:false}));
+    return;
+  }
+  if(t.classList.contains('stext')&&(ev.key==='Enter'||ev.key==='Escape')){ev.preventDefault();t.blur();return}
+  if(t.id!=='edit-input')return;
   if(ev.key==='Enter'){ev.preventDefault();const e=st.editing;commitEdit();if(e&&!e.id&&e.draft.trim())st.editing={key:e.key,owner:e.owner,draft:''};render()}
   else if(ev.key==='Escape'){st.editing=null;render()}
 });
 app.addEventListener('focusout',ev=>{
   if(st.rendering)return;
   if(ev.target.id==='edit-input'){commitEdit();setTimeout(requestRender)}
-  else if(st.pending)setTimeout(requestRender);
+  else{
+    if(ev.target.classList.contains('notes')){const id=ev.target.dataset.id;saveNotes(id);delete st.noteDrafts[id]}
+    if(st.pending)setTimeout(requestRender);
+  }
 });
 document.addEventListener('keydown',ev=>{
   if(st.screen!=='app'||(ev.target.closest&&ev.target.closest('input,textarea')))return;
